@@ -56,10 +56,12 @@ bool Transcoder::open() {
 
     Log(DEBUG) << "Decoder initialized successfully.";
 
+    std::string dir = filename_.substr(0, filename_.rfind('/') + 1);
+
     stats_cache.get_filesize(filename_, decoder_->mtime(),
                              encoded_filesize_);
     encoder_.reset(Encoder::CreateEncoder(params.desttype, buffer_,
-                                          encoded_filesize_));
+                                          encoded_filesize_, dir.c_str()));
     if (!encoder_) {
         errno = EIO;
         return false;

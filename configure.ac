@@ -1,7 +1,7 @@
 # Process this file with autoconf to produce a configure script.
 
 # Sets up package and initializes build system.
-AC_INIT([MP3FS], [0.91])
+AC_INIT([MP3FS], [0.92])
 AC_CONFIG_SRCDIR([src/mp3fs.cc])
 AC_CONFIG_AUX_DIR([config])
 AM_INIT_AUTOMAKE([foreign])
@@ -49,7 +49,7 @@ AC_ARG_WITH([mp3],
     [], [with_mp3=yes])
 
 AS_IF([test "x$with_mp3" != xno ],
-    [PKG_CHECK_MODULES([id3tag], [id3tag])
+    [PKG_CHECK_MODULES([taglib], [taglib >= 1.11])
      AC_CHECK_LIB([mp3lame], [lame_init],, [AC_MSG_ERROR([You must have liblame-dev installed to build mp3fs.])])
      AC_CHECK_HEADER([lame/lame.h],, [AC_MSG_ERROR([You must have liblame-dev installed to build mp3fs.])])
      AC_DEFINE([HAVE_MP3], [1], [Use LAME and id3tag libraries.])])

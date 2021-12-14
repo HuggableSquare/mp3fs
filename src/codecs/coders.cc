@@ -59,9 +59,9 @@ void Encoder::set_gain(double gainref, double album_gain, double track_gain) {
 
 /* Create instance of class derived from Encoder. */
 Encoder* Encoder::CreateEncoder(std::string file_type, Buffer& buffer,
-                                size_t actual_size) {
+                                size_t actual_size, const char* dir) {
 #ifdef HAVE_MP3
-    if (file_type == "mp3") return new Mp3Encoder(buffer, actual_size);
+    if (file_type == "mp3") return new Mp3Encoder(buffer, actual_size, dir);
 #endif
     return NULL;
 }

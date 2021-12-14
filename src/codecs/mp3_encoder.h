@@ -22,8 +22,12 @@
 #define MP3_ENCODER_H
 
 #include <map>
+#include <string.h>
 
-#include <id3tag.h>
+#include <taglib/id3v2tag.h>
+#include <taglib/id3v2frame.h>
+#include <taglib/tstringlist.h>
+#include <taglib/attachedpictureframe.h>
 #include <lame/lame.h>
 
 #include "codecs/coders.h"
@@ -31,9 +35,9 @@
 
 class Mp3Encoder : public Encoder {
 public:
-    static const size_t id3v1_tag_length = 128;
+    static const size_t id3v1_tag_length = 0;
 
-    Mp3Encoder(Buffer& buffer, size_t actual_size);
+    Mp3Encoder(Buffer& buffer, size_t actual_size, const char* dir);
     ~Mp3Encoder();
 
     int set_stream_params(uint64_t num_samples, int sample_rate,
@@ -58,9 +62,10 @@ public:
     bool no_partial_encode() { return params.vbr; }
 
 private:
+    const char* dir;
     lame_t lame_encoder;
     size_t actual_size;    // Use this as the size instead of computing it.
-    struct id3_tag* id3tag;
+    TagLib::ID3v2::Tag id3tag;
     size_t id3size;
     Buffer& buffer_;
     typedef std::map<int,const char*> meta_map_t;

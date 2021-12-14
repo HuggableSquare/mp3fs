@@ -51,15 +51,16 @@ static void lame_debug(const char *fmt, va_list list) {
  * particular file. Currently error handling is poor. If we run out
  * of memory, these routines will fail silently.
  */
-Mp3Encoder::Mp3Encoder(Buffer& buffer, size_t _actual_size) :
+Mp3Encoder::Mp3Encoder(Buffer& buffer, size_t _actual_size, const char* dir_t) :
 actual_size(_actual_size), buffer_(buffer) {
-    id3tag = id3_tag_new();
-
     Log(DEBUG) << "LAME ready to initialize.";
+
+    dir = dir_t;
 
     lame_encoder = lame_init();
 
-    set_text_tag(METATAG_ENCODER, PACKAGE_NAME);
+    // idk why this is useful, it puts it in the ENCODERSETTINGS tag
+    // set_text_tag(METATAG_ENCODER, PACKAGE_NAME);
 
     /* Set lame parameters. */
     if (params.vbr) {
@@ -82,9 +83,6 @@ actual_size(_actual_size), buffer_(buffer) {
  * so we have to check ourselves to avoid this case.
  */
 Mp3Encoder::~Mp3Encoder() {
-    if (id3tag) {
-        id3_tag_delete(id3tag);
-    }
     lame_close(lame_encoder);
 }
 
@@ -134,22 +132,11 @@ void Mp3Encoder::set_text_tag(const int key, const char* value) {
     meta_map_t::const_iterator it = metatag_map.find(key);
 
     if (it != metatag_map.end()) {
-        struct id3_frame* frame = id3_tag_findframe(id3tag, it->second, 0);
-        if (!frame) {
-            frame = id3_frame_new(it->second);
-            id3_tag_attachframe(id3tag, frame);
-
-            id3_field_settextencoding(id3_frame_field(frame, 0),
-                                      ID3_FIELD_TEXTENCODING_UTF_8);
-        }
-
-        id3_ucs4_t* ucs4 = id3_utf8_ucs4duplicate((id3_utf8_t *)value);
-        if (ucs4) {
-            id3_field_addstring(id3_frame_field(frame, 1), ucs4);
-            free(ucs4);
-        }
+        TagLib::StringList sl(TagLib::String(value, TagLib::String::UTF8));
+        TagLib::ID3v2::Frame* frame = TagLib::ID3v2::Frame::createTextualFrame(it->second, sl);
+        id3tag.addFrame(frame);
     /* Special handling for track or disc numbers. */
-    } else if (key == METATAG_TRACKNUMBER || key == METATAG_TRACKTOTAL
+    }/* else if (key == METATAG_TRACKNUMBER || key == METATAG_TRACKTOTAL
                || key == METATAG_DISCNUMBER || key == METATAG_DISCTOTAL) {
         const char* tagname;
         if (key == METATAG_TRACKNUMBER || key == METATAG_TRACKTOTAL) {
@@ -186,28 +173,23 @@ void Mp3Encoder::set_text_tag(const int key, const char* value) {
         if (tofree) {
             free(tofree);
         }
-    }
+    }*/
 }
 
 /* Set an ID3 picture ("APIC") tag. */
 void Mp3Encoder::set_picture_tag(const char* mime_type, int type,
                                  const char* description, const uint8_t* data,
                                  int data_length) {
-    struct id3_frame* frame = id3_frame_new("APIC");
-    id3_tag_attachframe(id3tag, frame);
+    TagLib::ByteVector picture((char *) data, data_length);
 
-    id3_field_settextencoding(id3_frame_field(frame, 0),
-                              ID3_FIELD_TEXTENCODING_UTF_8);
-    id3_field_setlatin1(id3_frame_field(frame, 1),
-                        (id3_latin1_t*)mime_type);
-    id3_field_setint(id3_frame_field(frame, 2), type);
-    id3_field_setbinarydata(id3_frame_field(frame, 4), data, data_length);
+    TagLib::ID3v2::AttachedPictureFrame* frame = new TagLib::ID3v2::AttachedPictureFrame();
+    frame->setMimeType(mime_type);
+    frame->setDescription(description);
+    frame->setType((TagLib::ID3v2::AttachedPictureFrame::Type) type);
+    Log(ERROR) << data_length;
+    frame->setPicture(picture);
 
-    id3_ucs4_t* ucs4 = id3_utf8_ucs4duplicate((id3_utf8_t *)description);
-    if (ucs4) {
-        id3_field_setstring(id3_frame_field(frame, 3), ucs4);
-        free(ucs4);
-    }
+    id3tag.addFrame(frame);
 }
 
 /*
@@ -225,29 +207,37 @@ void Mp3Encoder::set_gain_db(const double dbgain) {
  * Render the ID3 tag into the referenced Buffer. This should be the first
  * thing to go into the Buffer. The ID3v1 tag will also be written 128
  * bytes from the calculated end of the buffer. It has a fixed size.
+ * There is no ID3v1 tag for now.
  */
 int Mp3Encoder::render_tag() {
-    /*
-     * Disable ID3 compression because it hardly saves space and some
-     * players don't like it.
-     * Also add 12 bytes of padding at the end, because again some players
-     * are buggy.
-     * Some players = iTunes
-     */
-    id3_tag_options(id3tag, ID3_TAG_OPTION_COMPRESSION, 0);
-    id3_tag_setlength(id3tag, id3_tag_render(id3tag, nullptr) + 12);
-
-    // write v2 tag
-    id3size = id3_tag_render(id3tag, nullptr);
-    std::vector<uint8_t> tag24(id3size);
-    id3_tag_render(id3tag, tag24.data());
-    buffer_.write(tag24);
-
-    // Write v1 tag at end of buffer.
-    id3_tag_options(id3tag, ID3_TAG_OPTION_ID3V1, ~0);
-    std::vector<uint8_t> tag1(id3v1_tag_length);
-    id3_tag_render(id3tag, tag1.data());
-    buffer_.write(tag1, calculate_size() - id3v1_tag_length);
+    TagLib::ID3v2::FrameList pic_list = id3tag.frameListMap()["APIC"];
+    if (pic_list.isEmpty()) {
+        Log(DEBUG) << "Did not find cover art, looking in folder";
+        char filename[strlen(dir) + 9];
+        strcpy(filename, dir);
+        strcat(filename, "cover.jpg");
+        std::ifstream image(filename, std::ios::binary | std::ios::ate);
+        if (image.good()) {
+            Log(DEBUG) << "Image found";
+            int data_length = image.tellg();
+            image.seekg(0);
+            char image_data[data_length];
+            image.read(image_data, data_length);
+            Log(DEBUG) << "Writing image to metadata";
+            set_picture_tag("image/jpeg", TagLib::ID3v2::AttachedPictureFrame::Type::FrontCover, "", (const uint8_t*) image_data, data_length);
+        }
+        image.close();
+    }
+    TagLib::ID3v2::FrameList album_list = id3tag.frameListMap()["TALB"];
+    TagLib::ID3v2::FrameList title_list = id3tag.frameListMap()["TIT2"];
+    if (album_list.isEmpty() && !title_list.isEmpty()) {
+        TagLib::ID3v2::Frame* title = title_list.front();
+        set_text_tag(METATAG_ALBUM, title->toString().toCString());
+    }
+    TagLib::ByteVector tag = id3tag.render(3);
+    id3size = tag.size();
+    std::vector<uint8_t> data(tag.data(), tag.data() + tag.size());
+    buffer_.write(data);
 
     return 0;
 }
@@ -363,20 +353,23 @@ int Mp3Encoder::encode_finish() {
 /*
  * This map contains the association from the standard values in the enum in
  * coders.h to ID3 values.
+ * https://github.com/taglib/taglib/blob/master/taglib/mpeg/id3v2/id3v2frame.cpp#L326
  */
 const Mp3Encoder::meta_map_t Mp3Encoder::metatag_map {
-    {METATAG_TITLE, "TIT2"},
-    {METATAG_ARTIST, "TPE1"},
-    {METATAG_ALBUM, "TALB"},
-    {METATAG_GENRE, "TCON"},
-    {METATAG_DATE, "TDRC"},
-    {METATAG_COMPOSER, "TCOM"},
-    {METATAG_PERFORMER, "TOPE"},
-    {METATAG_COPYRIGHT, "TCOP"},
-    {METATAG_ENCODEDBY, "TENC"},
-    {METATAG_ORGANIZATION, "TPUB"},
-    {METATAG_CONDUCTOR, "TPE3"},
-    {METATAG_ALBUMARTIST, "TPE2"},
-    {METATAG_ENCODER, "TSSE"},
-    {METATAG_TRACKLENGTH, "TLEN"},
+    {METATAG_TITLE, "TITLE"},
+    {METATAG_ARTIST, "ARTIST"},
+    {METATAG_ALBUM, "ALBUM"},
+    {METATAG_GENRE, "GENRE"},
+    {METATAG_DATE, "DATE"},
+    {METATAG_COMPOSER, "COMPOSER"},
+    {METATAG_PERFORMER, "PERFORMER"},
+    {METATAG_COPYRIGHT, "COPYRIGHT"},
+    {METATAG_ENCODEDBY, "ENCODEDBY"},
+    {METATAG_ORGANIZATION, "LABEL"},
+    {METATAG_CONDUCTOR, "CONDUCTOR"},
+    {METATAG_ALBUMARTIST, "ALBUMARTIST"},
+    {METATAG_ENCODER, "ENCODING"},
+    {METATAG_TRACKLENGTH, "LENGTH"},
+    {METATAG_TRACKNUMBER, "TRACKNUMBER"},
+    {METATAG_DISCNUMBER, "DISCNUMBER"}
 };

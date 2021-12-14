@@ -80,7 +80,7 @@ public:
     virtual bool no_partial_encode() { return true; }
 
     static Encoder* CreateEncoder(const std::string file_type, Buffer& buffer,
-            size_t actual_size = 0);
+            size_t actual_size = 0, const char* dir = "");
 
     constexpr static double invalid_db = 1000.0;
 };
